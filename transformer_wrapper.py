@@ -228,7 +228,6 @@ class TransformerWrapper(pl.LightningModule):
             encoder_output_vectors = self.transformer.base_model.encoder(
                 input_ids=_input_ids,
                 inputs_embeds=_inputs_embeds,
-                max_length=max_length,
                 return_dict=True,
             ).last_hidden_state
         
