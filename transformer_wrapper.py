@@ -213,7 +213,7 @@ class TransformerWrapper(pl.LightningModule):
             raise NotImplementedError
 
         # Considering GPU capacity, some sequence would not be generated at once.
-        relative_tokens = list()
+        encoder_output_vectors = list()
         for i in range(0, batch_size, max_batch_size):
             start = i
             end = min(batch_size, i + max_batch_size)
@@ -225,11 +225,12 @@ class TransformerWrapper(pl.LightningModule):
                 _input_ids = input_ids[start:end]
                 _inputs_embeds = None
 
-            encoder_output_vectors = self.transformer.base_model.encoder(
+            encoder_output_vector = self.transformer.base_model.encoder(
                 input_ids=_input_ids,
                 inputs_embeds=_inputs_embeds,
                 return_dict=True,
             ).last_hidden_state
+            encoder_output_vectors.append(encoder_output_vector)
         
         return encoder_output_vectors
 
