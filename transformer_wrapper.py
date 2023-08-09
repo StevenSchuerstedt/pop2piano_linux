@@ -154,6 +154,85 @@ class TransformerWrapper(pl.LightningModule):
         )
 
         return relative_tokens, notes, pm
+    
+
+
+    @torch.no_grad()
+    def single_inference_latent_space(
+        self,
+        feature_tokens=None,
+        audio=None,
+        beatstep=None,
+        max_length=256,
+        max_batch_size=64,
+        n_bars=None,
+        composer_value=None,
+    ):
+        """
+        generate a long audio sequence
+
+        feature_tokens or audio : shape (time, )
+
+        beatstep : shape (time, )
+        - input_ids가 해당하는 beatstep 값들
+        (offset 빠짐, 즉 beatstep[0] == 0)
+        - beatstep[-1] : input_ids가 끝나는 지점의 시간값
+        (즉 beatstep[-1] == len(y)//sr)
+        """
+
+        assert feature_tokens is not None or audio is not None
+        assert beatstep is not None
+
+        if feature_tokens is not None:
+            assert len(feature_tokens.shape) == 1
+
+        if audio is not None:
+            assert len(audio.shape) == 1
+
+        config = self.config
+        PAD = self.t5config.pad_token_id
+        n_bars = config.dataset.n_bars if n_bars is None else n_bars
+
+        if beatstep[0] > 0.01:
+            print(
+                "inference warning : beatstep[0] is not 0 ({beatstep[0]}). all beatstep will be shifted."
+            )
+            beatstep = beatstep - beatstep[0]
+
+        if self.use_mel:
+            input_ids = None
+            inputs_embeds, ext_beatstep = self.prepare_inference_mel(
+                audio,
+                beatstep,
+                n_bars=n_bars,
+                padding_value=PAD,
+                composer_value=composer_value,
+            )
+            batch_size = inputs_embeds.shape[0]
+        else:
+            raise NotImplementedError
+
+        # Considering GPU capacity, some sequence would not be generated at once.
+        relative_tokens = list()
+        for i in range(0, batch_size, max_batch_size):
+            start = i
+            end = min(batch_size, i + max_batch_size)
+
+            if input_ids is None:
+                _input_ids = None
+                _inputs_embeds = inputs_embeds[start:end]
+            else:
+                _input_ids = input_ids[start:end]
+                _inputs_embeds = None
+
+            encoder_output_vectors = self.transformer.base_model.encoder(
+                input_ids=_input_ids,
+                inputs_embeds=_inputs_embeds,
+                max_length=max_length,
+                return_dict=True,
+            ).last_hidden_state
+        
+        return encoder_output_vectors
 
     def prepare_inference_mel(
         self, audio, beatstep, n_bars, padding_value, composer_value=None
@@ -340,3 +419,113 @@ class TransformerWrapper(pl.LightningModule):
             pm.write(midi_path)
 
         return pm, composer, mix_path, midi_path
+
+    @torch.no_grad()
+    def generate_latent_space(
+        self,
+        audio_path=None,
+        composer=None,
+        model="generated",
+        steps_per_beat=2,
+        stereo_amp=0.5,
+        n_bars=2,
+        ignore_duplicate=True,
+        show_plot=False,
+        save_midi=False,
+        save_mix=False,
+        midi_path=None,
+        mix_path=None,
+        click_amp=0.2,
+        add_click=False,
+        max_batch_size=None,
+        beatsteps=None,
+        mix_sample_rate=None,
+        audio_y=None,
+        audio_sr=None,
+    ):
+        config = self.config
+        device = self.device
+
+        if audio_path is not None:
+            extension = os.path.splitext(audio_path)[1]
+            mix_path = (
+                audio_path.replace(extension, f".{model}.{composer}.wav")
+                if mix_path is None
+                else mix_path
+            )
+            midi_path = (
+                audio_path.replace(extension, f".{model}.{composer}.mid")
+                if midi_path is None
+                else midi_path
+            )
+
+        max_batch_size = 64 // n_bars if max_batch_size is None else max_batch_size
+        composer_to_feature_token = self.composer_to_feature_token
+
+        if composer is None:
+            composer = random.sample(list(composer_to_feature_token.keys()), 1)[0]
+
+        composer_value = composer_to_feature_token[composer]
+        mix_sample_rate = (
+            config.dataset.sample_rate if mix_sample_rate is None else mix_sample_rate
+        )
+
+        if not ignore_duplicate:
+            if os.path.exists(midi_path):
+                return
+
+        ESSENTIA_SAMPLERATE = 44100
+
+        if beatsteps is None:
+            y, sr = librosa.load(audio_path, sr=ESSENTIA_SAMPLERATE)
+            (
+                bpm,
+                beat_times,
+                confidence,
+                estimates,
+                essentia_beat_intervals,
+            ) = extract_rhythm(audio_path, y=y)
+            beat_times = np.array(beat_times)
+            beatsteps = interpolate_beat_times(beat_times, steps_per_beat, extend=True)
+        else:
+            y = None
+
+        if self.use_mel:
+            if audio_y is None and config.dataset.sample_rate != ESSENTIA_SAMPLERATE:
+                if y is not None:
+                    y = librosa.core.resample(
+                        y,
+                        orig_sr=ESSENTIA_SAMPLERATE,
+                        target_sr=config.dataset.sample_rate,
+                    )
+                    sr = config.dataset.sample_rate
+                else:
+                    y, sr = librosa.load(audio_path, sr=config.dataset.sample_rate)
+            elif audio_y is not None:
+                if audio_sr != config.dataset.sample_rate:
+                    audio_y = librosa.core.resample(
+                        audio_y, orig_sr=audio_sr, target_sr=config.dataset.sample_rate
+                    )
+                    audio_sr = config.dataset.sample_rate
+                y = audio_y
+                sr = audio_sr
+
+            start_sample = int(beatsteps[0] * sr)
+            end_sample = int(beatsteps[-1] * sr)
+            _audio = torch.from_numpy(y)[start_sample:end_sample].to(device)
+            fzs = None
+        else:
+            raise NotImplementedError
+
+        encoder_output_vectors = self.single_inference_latent_space(
+            feature_tokens=fzs,
+            audio=_audio,
+            beatstep=beatsteps - beatsteps[0],
+            max_length=config.dataset.target_length
+            * max(1, (n_bars // config.dataset.n_bars)),
+            max_batch_size=max_batch_size,
+            n_bars=n_bars,
+            composer_value=composer_value,
+        )
+
+        return encoder_output_vectors
