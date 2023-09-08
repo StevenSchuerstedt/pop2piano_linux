@@ -70,7 +70,9 @@ class TransformerWrapper(pl.LightningModule):
         max_length=256,
         max_batch_size=64,
         n_bars=None,
-        composer_value=None,
+        composer_value_1=None,
+        composer_value_2=None,
+        alpha=1.0
     ):
         """
         generate a long audio sequence
@@ -110,7 +112,9 @@ class TransformerWrapper(pl.LightningModule):
                 beatstep,
                 n_bars=n_bars,
                 padding_value=PAD,
-                composer_value=composer_value,
+                composer_value_1=composer_value_1,
+                composer_value_2=composer_value_2,
+                alpha=alpha
             )
             batch_size = inputs_embeds.shape[0]
         else:
@@ -206,7 +210,8 @@ class TransformerWrapper(pl.LightningModule):
                 beatstep,
                 n_bars=n_bars,
                 padding_value=PAD,
-                composer_value=composer_value,
+                composer_value_1=composer_value,
+                alpha=1.0
             )
             batch_size = inputs_embeds.shape[0]
         else:
@@ -235,7 +240,7 @@ class TransformerWrapper(pl.LightningModule):
         return encoder_output_vectors
 
     def prepare_inference_mel(
-        self, audio, beatstep, n_bars, padding_value, composer_value=None
+        self, audio, beatstep, n_bars, padding_value, composer_value_1=None, composer_value_2=None, alpha=1.0
     ):
         n_steps = n_bars * 4
         n_target_step = len(beatstep)
@@ -268,16 +273,22 @@ class TransformerWrapper(pl.LightningModule):
 
         inputs_embeds = self.spectrogram(batch).transpose(-1, -2)
         if self.mel_is_conditioned:
-            composer_value = torch.tensor(composer_value).to(self.device)
-            composer_value = composer_value.repeat(inputs_embeds.shape[0])
-            inputs_embeds = self.mel_conditioner(inputs_embeds, composer_value)
+            composer_value_1 = torch.tensor(composer_value_1).to(self.device)
+            composer_value_1 = composer_value_1.repeat(inputs_embeds.shape[0])
+
+            composer_value_2 = torch.tensor(composer_value_2).to(self.device)
+            composer_value_2 = composer_value_2.repeat(inputs_embeds.shape[0])
+            #forward call of nn
+            inputs_embeds = self.mel_conditioner(inputs_embeds, composer_value_1, composer_value_2, alpha)
         return inputs_embeds, ext_beatstep
 
     @torch.no_grad()
     def generate(
         self,
         audio_path=None,
-        composer=None,
+        composer_1=None,
+        composer_2=None,
+        alpha=1.0,
         model="generated",
         steps_per_beat=2,
         stereo_amp=0.5,
@@ -318,7 +329,8 @@ class TransformerWrapper(pl.LightningModule):
         if composer is None:
             composer = random.sample(list(composer_to_feature_token.keys()), 1)[0]
 
-        composer_value = composer_to_feature_token[composer]
+        composer_value_1 = composer_to_feature_token[composer_1]
+        composer_value_2 = composer_to_feature_token[composer_2]
         mix_sample_rate = (
             config.dataset.sample_rate if mix_sample_rate is None else mix_sample_rate
         )
@@ -378,7 +390,9 @@ class TransformerWrapper(pl.LightningModule):
             * max(1, (n_bars // config.dataset.n_bars)),
             max_batch_size=max_batch_size,
             n_bars=n_bars,
-            composer_value=composer_value,
+            composer_value_1=composer_value_1,
+            composer_value_2=composer_value_2,
+            alpha=alpha
         )
 
         for n in pm.instruments[0].notes:
