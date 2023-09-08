@@ -313,12 +313,12 @@ class TransformerWrapper(pl.LightningModule):
         if audio_path is not None:
             extension = os.path.splitext(audio_path)[1]
             mix_path = (
-                audio_path.replace(extension, f".{model}.{composer}.wav")
+                audio_path.replace(extension, f".{model}.{composer_1}.wav")
                 if mix_path is None
                 else mix_path
             )
             midi_path = (
-                audio_path.replace(extension, f".{model}.{composer}.mid")
+                audio_path.replace(extension, f".{model}.{composer_1}.mid")
                 if midi_path is None
                 else midi_path
             )
@@ -326,8 +326,8 @@ class TransformerWrapper(pl.LightningModule):
         max_batch_size = 64 // n_bars if max_batch_size is None else max_batch_size
         composer_to_feature_token = self.composer_to_feature_token
 
-        if composer is None:
-            composer = random.sample(list(composer_to_feature_token.keys()), 1)[0]
+        if composer_2 is None:
+            composer_2 = random.sample(list(composer_to_feature_token.keys()), 1)[0]
 
         composer_value_1 = composer_to_feature_token[composer_1]
         composer_value_2 = composer_to_feature_token[composer_2]
@@ -432,7 +432,7 @@ class TransformerWrapper(pl.LightningModule):
         if save_midi:
             pm.write(midi_path)
 
-        return pm, composer, mix_path, midi_path
+        return pm, composer_1+composer_2, mix_path, midi_path
 
     @torch.no_grad()
     def generate_latent_space(
