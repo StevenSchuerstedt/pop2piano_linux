@@ -170,7 +170,9 @@ class TransformerWrapper(pl.LightningModule):
         max_length=256,
         max_batch_size=64,
         n_bars=None,
-        composer_value=None,
+        composer_value_1=None,
+        composer_value_2=None,
+        alpha=1.0
     ):
         """
         generate a long audio sequence
@@ -210,8 +212,9 @@ class TransformerWrapper(pl.LightningModule):
                 beatstep,
                 n_bars=n_bars,
                 padding_value=PAD,
-                composer_value_1=composer_value,
-                alpha=1.0
+                composer_value_1=composer_value_1,
+                composer_value_2=composer_value_2,
+                alpha=alpha
             )
             batch_size = inputs_embeds.shape[0]
         else:
@@ -438,7 +441,9 @@ class TransformerWrapper(pl.LightningModule):
     def generate_latent_space(
         self,
         audio_path=None,
-        composer=None,
+        composer_1=None,
+        composer_2=None,
+        alpha=1.0,
         model="generated",
         steps_per_beat=2,
         stereo_amp=0.5,
@@ -463,12 +468,12 @@ class TransformerWrapper(pl.LightningModule):
         if audio_path is not None:
             extension = os.path.splitext(audio_path)[1]
             mix_path = (
-                audio_path.replace(extension, f".{model}.{composer}.wav")
+                audio_path.replace(extension, f".{model}.{composer_1}.wav")
                 if mix_path is None
                 else mix_path
             )
             midi_path = (
-                audio_path.replace(extension, f".{model}.{composer}.mid")
+                audio_path.replace(extension, f".{model}.{composer_1}.mid")
                 if midi_path is None
                 else midi_path
             )
@@ -476,10 +481,12 @@ class TransformerWrapper(pl.LightningModule):
         max_batch_size = 64 // n_bars if max_batch_size is None else max_batch_size
         composer_to_feature_token = self.composer_to_feature_token
 
-        if composer is None:
-            composer = random.sample(list(composer_to_feature_token.keys()), 1)[0]
+        if composer_2 is None:
+            composer_2 = random.sample(list(composer_to_feature_token.keys()), 1)[0]
 
-        composer_value = composer_to_feature_token[composer]
+        composer_value_1 = composer_to_feature_token[composer_1]
+        composer_value_2 = composer_to_feature_token[composer_2]
+        
         mix_sample_rate = (
             config.dataset.sample_rate if mix_sample_rate is None else mix_sample_rate
         )
@@ -539,7 +546,9 @@ class TransformerWrapper(pl.LightningModule):
             * max(1, (n_bars // config.dataset.n_bars)),
             max_batch_size=max_batch_size,
             n_bars=n_bars,
-            composer_value=composer_value,
+            composer_value_1=composer_value_1,
+            composer_value_2=composer_value_2,
+            alpha=alpha
         )
 
         return encoder_output_vectors
